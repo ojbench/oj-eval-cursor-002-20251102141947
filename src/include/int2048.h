@@ -14,12 +14,31 @@
 #include <cstring>
 #include <iostream>
 #include <vector>
+#include <string>
 
 // Do not use "using namespace std;"
 
 namespace sjtu {
 class int2048 {
-  // todo
+  // Internal representation: little-endian base-1e9 limbs with signed flag
+  // digits_[i] stores the i-th limb, base BASE
+  static constexpr unsigned int BASE = 1000000000u;
+  static constexpr unsigned long long BASE64 = 1000000000ull;
+  std::vector<unsigned int> digits_;
+  bool negative_ = false;
+
+  // Utility helpers (do not expose)
+  void trimLeadingZeros();
+  static int compareAbs(const int2048 &a, const int2048 &b);
+  static int2048 addAbs(const int2048 &a, const int2048 &b);
+  static int2048 subAbs(const int2048 &a, const int2048 &b); // |a| >= |b|
+  static int2048 mulAbsNaive(const int2048 &a, const int2048 &b);
+  static void mulByDigit(const std::vector<unsigned int> &a, unsigned int m, std::vector<unsigned int> &res);
+  static unsigned int divAbsByDigit(const int2048 &a, unsigned int d, int2048 &q); // returns remainder
+  static void addInPlaceWithShift(std::vector<unsigned int> &acc, const std::vector<unsigned int> &addend, size_t shift);
+  static int2048 divmodAbs(const int2048 &a, const int2048 &b, int2048 &remainder);
+  static bool isZeroVec(const std::vector<unsigned int> &v);
+  bool isZero() const { return digits_.empty(); }
 public:
   // Constructors
   int2048();
