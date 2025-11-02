@@ -254,47 +254,35 @@ void int2048::read(const std::string &s) {
     negative_ = (s[i] == '-');
     ++i;
   }
-  while (i < s.size() && s[i] == '0') ++i; // skip leading zeros
-  std::vector<unsigned int> parts;
-  for (size_t j = s.size(); j > i;) {
-    size_t start = (j >= 9 ? j - 9 : i);
-    if (start < i) start = i;
-    unsigned int chunk = 0;
-    for (size_t k = start; k < j; ++k) {
-      char c = s[k];
-      if (c < '0' || c > '9') { chunk = 0; start = j; break; }
-      chunk = chunk * 10u + static_cast<unsigned int>(c - '0');
-    }
-    parts.push_back(chunk);
-    j = start;
+  // Skip leading zeros but detect if number is zero
+  while (i < s.size() && s[i] == '0') ++i;
+  if (i == s.size()) {
+    digits_.clear();
+    negative_ = false;
+    return;
   }
-  // parts holds big-endian chunks of up to 9 digits; build little-endian digits_
-  for (size_t p = 0; p < parts.size(); ++p) {
-    unsigned long long carry = parts[p];
-    unsigned long long base10_9 = 1000000000ull;
-    if (digits_.empty()) {
-      if (carry) digits_.push_back(static_cast<unsigned int>(carry));
-    } else {
-      // multiply existing by 10^9 and add carry
-      unsigned long long mul = base10_9;
-      unsigned long long c = carry;
-      unsigned long long carryMul = 0;
-      for (size_t idx = 0; idx < digits_.size(); ++idx) {
-        unsigned long long cur = static_cast<unsigned long long>(digits_[idx]) * mul + carryMul;
-        digits_[idx] = static_cast<unsigned int>(cur % BASE64);
-        carryMul = cur / BASE64;
-      }
-      if (carryMul) digits_.push_back(static_cast<unsigned int>(carryMul));
-      // add carry
-      unsigned long long iCarry = c;
-      size_t idx2 = 0;
-      while (iCarry) {
-        if (idx2 >= digits_.size()) digits_.push_back(0);
-        unsigned long long cur = digits_[idx2] + iCarry;
-        digits_[idx2] = static_cast<unsigned int>(cur % BASE64);
-        iCarry = cur / BASE64;
-        ++idx2;
-      }
+  // Parse digit by digit: value = value * 10 + digit
+  for (; i < s.size(); ++i) {
+    char c = s[i];
+    if (c < '0' || c > '9') break;
+    // multiply by 10
+    unsigned long long carry = 0;
+    for (size_t k = 0; k < digits_.size(); ++k) {
+      unsigned long long cur = digits_[k] * 10ull + carry;
+      digits_[k] = static_cast<unsigned int>(cur % BASE64);
+      carry = cur / BASE64;
+    }
+    if (carry) digits_.push_back(static_cast<unsigned int>(carry));
+    // add digit
+    unsigned int add = static_cast<unsigned int>(c - '0');
+    size_t pos = 0;
+    unsigned long long c2 = add;
+    while (c2) {
+      if (pos >= digits_.size()) digits_.push_back(0);
+      unsigned long long cur = digits_[pos] + c2;
+      digits_[pos] = static_cast<unsigned int>(cur % BASE64);
+      c2 = cur / BASE64;
+      ++pos;
     }
   }
   trimLeadingZeros();
