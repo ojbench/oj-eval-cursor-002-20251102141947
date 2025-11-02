@@ -35,6 +35,7 @@ class int2048 {
   static int2048 mulAbsNaive(const int2048 &a, const int2048 &b);
   static void mulByDigit(const std::vector<unsigned int> &a, unsigned int m, std::vector<unsigned int> &res);
   static unsigned int divAbsByDigit(const int2048 &a, unsigned int d, int2048 &q); // returns remainder
+  static unsigned long long divAbsByUint64(const int2048 &a, unsigned long long d, int2048 &q); // returns remainder
   static void addInPlaceWithShift(std::vector<unsigned int> &acc, const std::vector<unsigned int> &addend, size_t shift);
   static int2048 divmodAbs(const int2048 &a, const int2048 &b, int2048 &remainder);
   static bool isZeroVec(const std::vector<unsigned int> &v);

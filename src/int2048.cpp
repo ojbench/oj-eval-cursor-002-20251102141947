@@ -128,8 +128,22 @@ unsigned int int2048::divAbsByDigit(const int2048 &a, unsigned int d, int2048 &q
   return static_cast<unsigned int>(rem);
 }
 
+unsigned long long int2048::divAbsByUint64(const int2048 &a, unsigned long long d, int2048 &q) {
+  q.digits_.assign(a.digits_.size(), 0);
+  q.negative_ = false;
+  unsigned long long rem = 0;
+  for (size_t i = a.digits_.size(); i-- > 0;) {
+    unsigned __int128 cur = static_cast<unsigned __int128>(rem) * BASE64 + a.digits_[i];
+    unsigned long long qi = static_cast<unsigned long long>(cur / d);
+    rem = static_cast<unsigned long long>(cur % d);
+    q.digits_[i] = static_cast<unsigned int>(qi);
+  }
+  q.trimLeadingZeros();
+  return rem;
+}
+
 int2048 int2048::divmodAbs(const int2048 &a, const int2048 &b, int2048 &remainder) {
-  // Long division: compute q = |a| / |b|, r = |a| % |b| with 0 <= r < |b|
+  // Knuth's algorithm D (normalized long division) on base BASE
   int2048 zero(0);
   remainder = zero;
   if (b.digits_.empty()) return zero; // undefined, but guard
@@ -138,79 +152,93 @@ int2048 int2048::divmodAbs(const int2048 &a, const int2048 &b, int2048 &remainde
     remainder = a;
     return zero;
   }
-
-  int2048 divisor = b;
-  int2048 dividend = a;
-  size_t n = divisor.digits_.size();
-  size_t m = dividend.digits_.size();
-  std::vector<unsigned int> q(m - n + 1, 0);
-
-  // Normalization not strictly required if we use per-position binary search
-  remainder.digits_.clear();
-  remainder.negative_ = false;
-  remainder.digits_.assign(m, 0);
-  for (size_t i = m; i-- > 0;) {
-    // Shift remainder left by one limb and add current digit
-    for (size_t k = remainder.digits_.size(); k-- > 1;) {
-      remainder.digits_[k] = remainder.digits_[k - 1];
+  size_t n = b.digits_.size();
+  size_t m = a.digits_.size();
+  std::vector<unsigned int> u(m + 1, 0), v(n, 0), q(m - n + 1, 0);
+  for (size_t i = 0; i < m; ++i) u[i] = a.digits_[i];
+  for (size_t i = 0; i < n; ++i) v[i] = b.digits_[i];
+  // normalization factor
+  unsigned long long vms = v[n - 1];
+  unsigned long long f = (BASE64 / (vms + 1ull));
+  if (f > 1) {
+    // multiply u and v by f
+    unsigned long long carry = 0;
+    for (size_t i = 0; i < m; ++i) {
+      unsigned long long cur = u[i] * f + carry;
+      u[i] = static_cast<unsigned int>(cur % BASE64);
+      carry = cur / BASE64;
     }
-    if (!remainder.digits_.empty()) remainder.digits_[0] = 0;
-    if (!remainder.digits_.empty()) remainder.digits_[0] = dividend.digits_[i];
-    remainder.trimLeadingZeros();
-
-    // Determine quotient digit at position i-n (if i >= n-1)
-    if (compareAbs(remainder, divisor) >= 0) {
-      // Binary search qdigit in [1, BASE-1]
-      unsigned int lo = 0, hi = BASE - 1, best = 0;
-      std::vector<unsigned int> prod;
-      while (lo <= hi) {
-        unsigned int mid = lo + ((hi - lo) >> 1);
-        mulByDigit(divisor.digits_, mid, prod);
-        int2048 prodNum;
-        prodNum.digits_ = prod;
-        int cmp = compareAbs(prodNum, remainder);
-        if (cmp <= 0) {
-          best = mid;
-          lo = mid + 1;
-        } else {
-          if (mid == 0) break;
-          hi = mid - 1;
-        }
-      }
-      if (best) {
-        std::vector<unsigned int> prodBest;
-        mulByDigit(divisor.digits_, best, prodBest);
-        // remainder -= prodBest
-        long long carry = 0;
-        size_t L = remainder.digits_.size();
-        for (size_t t = 0; t < L; ++t) {
-          long long rv = remainder.digits_[t];
-          long long pv = t < prodBest.size() ? prodBest[t] : 0;
-          long long cur = rv - pv + carry;
-          if (cur < 0) {
-            cur += static_cast<long long>(BASE64);
-            carry = -1;
-          } else {
-            carry = 0;
-          }
-          remainder.digits_[t] = static_cast<unsigned int>(cur);
-        }
-        remainder.trimLeadingZeros();
-      }
-      if (i + 1 >= n) q[i + 1 - n] = best;
-    } else if (i + 1 >= n) {
-      q[i + 1 - n] = 0;
+    u[m] = static_cast<unsigned int>(carry);
+    carry = 0;
+    for (size_t i = 0; i < n; ++i) {
+      unsigned long long cur = v[i] * f + carry;
+      v[i] = static_cast<unsigned int>(cur % BASE64);
+      carry = cur / BASE64;
     }
+  } else {
+    u[m] = 0;
   }
-  // Build quotient from q[] which is little-endian aligned starting at position 0
+  for (size_t j = m - n + 1; j-- > 0;) {
+    unsigned __int128 uj2 = static_cast<unsigned __int128>(u[j + n]) * BASE64 + u[j + n - 1];
+    unsigned long long qhat = static_cast<unsigned long long>(uj2 / v[n - 1]);
+    unsigned long long rhat = static_cast<unsigned long long>(uj2 % v[n - 1]);
+    if (qhat >= BASE64) qhat = BASE64 - 1;
+    // ensure qhat*v[n-2] <= (rhat*BASE + u[j+n-2])
+    while (n >= 2) {
+      unsigned __int128 left = static_cast<unsigned __int128>(qhat) * v[n - 2];
+      unsigned __int128 right = static_cast<unsigned __int128>(rhat) * BASE64 + u[j + n - 2];
+      if (left <= right) break;
+      --qhat;
+      rhat += v[n - 1];
+      if (rhat >= BASE64) break;
+    }
+    // multiply and subtract qhat * v from u segment starting at j
+    long long borrow = 0;
+    unsigned long long carry = 0;
+    for (size_t i = 0; i < n; ++i) {
+      unsigned __int128 prod = static_cast<unsigned __int128>(qhat) * v[i] + carry;
+      carry = static_cast<unsigned long long>(prod / BASE64);
+      long long cur = static_cast<long long>(u[j + i]) - static_cast<long long>(prod % BASE64) + borrow;
+      if (cur < 0) {
+        cur += static_cast<long long>(BASE64);
+        borrow = -1;
+      } else {
+        borrow = 0;
+      }
+      u[j + i] = static_cast<unsigned int>(cur);
+    }
+    long long cur = static_cast<long long>(u[j + n]) - static_cast<long long>(carry) + borrow;
+    if (cur < 0) {
+      // qhat was too big; decrement and add back v
+      --qhat;
+      unsigned long long c = 0;
+      for (size_t i = 0; i < n; ++i) {
+        unsigned long long sum = static_cast<unsigned long long>(u[j + i]) + v[i] + c;
+        u[j + i] = static_cast<unsigned int>(sum % BASE64);
+        c = sum / BASE64;
+      }
+      u[j + n] = static_cast<unsigned int>(static_cast<unsigned long long>(u[j + n]) + c);
+    } else {
+      u[j + n] = static_cast<unsigned int>(cur);
+    }
+    q[j] = static_cast<unsigned int>(qhat);
+  }
+  // denormalize remainder
+  remainder.digits_.assign(n, 0);
+  unsigned long long carry = 0;
+  if (f > 1) {
+    for (size_t i = n; i-- > 0;) {
+      unsigned __int128 cur = static_cast<unsigned __int128>(carry) * BASE64 + u[i];
+      unsigned long long di = static_cast<unsigned long long>(cur / f);
+      carry = static_cast<unsigned long long>(cur % f);
+      remainder.digits_[i] = static_cast<unsigned int>(di);
+    }
+  } else {
+    for (size_t i = 0; i < n; ++i) remainder.digits_[i] = u[i];
+  }
+  remainder.trimLeadingZeros();
   int2048 quotient;
-  quotient.digits_.clear();
-  quotient.negative_ = false;
-  // q array currently has size m-n+1 where index k corresponds to limb at position k
-  // Remove leading zeros
-  size_t qsz = q.size();
-  while (qsz > 0 && q[qsz - 1] == 0) --qsz;
-  quotient.digits_.assign(q.begin(), q.begin() + qsz);
+  quotient.digits_.assign(q.begin(), q.end());
   quotient.trimLeadingZeros();
   return quotient;
 }
@@ -383,7 +411,7 @@ int2048 &int2048::operator*=(const int2048 &rhs) {
   if ((n + m) >= 256) {
     // FFT-based multiplication in base 1e4
     // Convert to base 1e4 vectors
-    const unsigned int BASE_SMALL = 10000u;
+    const unsigned int BASE_SMALL = 1000u;
     std::vector<double> fa, fb;
     std::vector<unsigned int> A, B;
     A.reserve(n * 3);
@@ -461,17 +489,21 @@ int2048 &int2048::operator*=(const int2048 &rhs) {
         carry /= BASE_SMALL;
       }
       while (!resSmall.empty() && resSmall.back() == 0) resSmall.pop_back();
-      // Convert base1e4 back to base1e9 (group 3 digits)
+      // Convert base1e3 back to base1e9 (group 3 digits) with carry
       prod.digits_.clear();
       prod.negative_ = false;
+      unsigned long long carry2 = 0;
       for (size_t i = 0; i < resSmall.size();) {
         unsigned long long v0 = resSmall[i++];
         unsigned long long v1 = (i < resSmall.size() ? resSmall[i++] : 0ull);
         unsigned long long v2 = (i < resSmall.size() ? resSmall[i++] : 0ull);
-        unsigned long long combined = v0 + v1 * 10000ull + v2 * 100000000ull; // 1e4^2 = 1e8
+        unsigned long long combined = v0 + v1 * 1000ull + v2 * 1000000ull + carry2; // 1e3^2 = 1e6, 1e3^3 = 1e9
         prod.digits_.push_back(static_cast<unsigned int>(combined % BASE64));
-        unsigned long long up = combined / BASE64;
-        if (up) prod.digits_.push_back(static_cast<unsigned int>(up));
+        carry2 = combined / BASE64;
+      }
+      while (carry2) {
+        prod.digits_.push_back(static_cast<unsigned int>(carry2 % BASE64));
+        carry2 /= BASE64;
       }
       prod.trimLeadingZeros();
     }
@@ -492,7 +524,18 @@ int2048 &int2048::operator/=(const int2048 &rhs) {
   bool bNeg = rhs.negative_;
   int2048 aa = *this; aa.negative_ = false;
   int2048 bb = rhs; bb.negative_ = false;
-  int2048 q = divmodAbs(aa, bb, rem);
+  int2048 q;
+  if (bb.digits_.size() == 1) {
+    divAbsByDigit(aa, bb.digits_[0], q);
+    // rem not used for floor adjust; compute if needed
+    int2048 tmpq; unsigned int r = divAbsByDigit(aa, bb.digits_[0], tmpq); rem = int2048(static_cast<long long>(r));
+  } else if (bb.digits_.size() == 2) {
+    unsigned long long d = static_cast<unsigned long long>(bb.digits_[0]) + static_cast<unsigned long long>(bb.digits_[1]) * BASE64;
+    unsigned long long r = divAbsByUint64(aa, d, q);
+    rem = int2048(static_cast<long long>(r));
+  } else {
+    q = divmodAbs(aa, bb, rem);
+  }
   if (isZero()) { digits_.clear(); negative_ = false; return *this; }
   if (bNeg == aNeg) {
     // same sign -> floor == trunc
@@ -527,7 +570,17 @@ int2048 &int2048::operator%=(const int2048 &rhs) {
   bool bNeg = rhs.negative_;
   int2048 aa = *this; aa.negative_ = false;
   int2048 bb = rhs; bb.negative_ = false;
-  int2048 q = divmodAbs(aa, bb, rem);
+  int2048 q;
+  if (bb.digits_.size() == 1) {
+    unsigned int r = divAbsByDigit(aa, bb.digits_[0], q);
+    rem = int2048(static_cast<long long>(r));
+  } else if (bb.digits_.size() == 2) {
+    unsigned long long d = static_cast<unsigned long long>(bb.digits_[0]) + static_cast<unsigned long long>(bb.digits_[1]) * BASE64;
+    unsigned long long r = divAbsByUint64(aa, d, q);
+    rem = int2048(static_cast<long long>(r));
+  } else {
+    q = divmodAbs(aa, bb, rem);
+  }
   if (bNeg == aNeg) {
     // r is rem, non-negative
     digits_.swap(rem.digits_);
